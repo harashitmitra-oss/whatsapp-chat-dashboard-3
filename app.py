@@ -306,7 +306,9 @@ if chat_file:
         st.dataframe(subset[["DisplayName", "MessageCount", "Sentiment", "LeadScore"]])
 
         # AI explanation
-        sample_msgs = df[df["DisplayName"].isin(subset["DisplayName"])].sample(min(30, len(df)), random_state=42)["Message"].tolist()
+        subset_df = df[df["DisplayName"].isin(subset["DisplayName"])]
+sample_msgs = subset_df.sample(min(30, len(subset_df)), random_state=42)["Message"].tolist() if len(subset_df) > 0 else []
+
         ai_prompt = f"""
 These are messages from {level} engagement users in a WhatsApp group. 
 Summarize what they mostly talk about and their intent in business terms:
@@ -517,3 +519,4 @@ Messages:
 
 else:
     st.info("📥 Please upload a WhatsApp chat file to begin analysis.")
+
