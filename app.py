@@ -9,7 +9,7 @@ from textblob import TextBlob
 from wordcloud import WordCloud
 from datetime import datetime
 import emoji
-from collections import Counter, defaultdict
+from collections import Counter
 from fpdf import FPDF
 from docx import Document
 from openai import OpenAI
@@ -297,32 +297,30 @@ if chat_file:
     st.plotly_chart(fig_eng, use_container_width=True)
 
     # -------------------------------
-    # List Users by Engagement Level + AI Explanation
+    # Users by Engagement Level + AI Explanation
     # -------------------------------
     st.subheader("👥 Users by Engagement Level")
+
     for level in ["High", "Medium", "Low"]:
         st.markdown(f"### {level} Engagement Users")
         subset = participant_stats[participant_stats["EngagementLevel"] == level].sort_values("MessageCount", ascending=False)
         st.dataframe(subset[["DisplayName", "MessageCount", "Sentiment", "LeadScore"]])
 
-        # AI explanation
-        
-subset_df = df[df["DisplayName"].isin(subset["DisplayName"])]
-if len(subset_df) > 0:
-    sample_size = min(30, len(subset_df))
-    sample_msgs = subset_df.sample(sample_size, random_state=42)["Message"].tolist()
-else:
-    sample_msgs = []
+        subset_df = df[df["DisplayName"].isin(subset["DisplayName"])]
 
-ai_prompt = f"""
-Analyze the following WhatsApp messages.
-Summarize what these users are mostly talking about, key themes, concerns, and interests.
+        if len(subset_df) > 0:
+            sample_size = min(30, len(subset_df))
+            sample_msgs = subset_df.sample(sample_size, random_state=42)["Message"].tolist()
+        else:
+            sample_msgs = []
+
+        ai_prompt = f"""
+Analyze the following WhatsApp messages from {level} engagement users.
+Summarize what they are mostly talking about, key themes, concerns, and interests.
 Provide business-friendly statements.
 
 Messages:
 {' '.join(sample_msgs)}
-"""
-
 """
         ai_text = generate_ai_summary(ai_prompt)
         st.info(f"🤖 AI Insight on {level} Engagement Users:\n\n{ai_text}")
@@ -527,5 +525,3 @@ Messages:
 
 else:
     st.info("📥 Please upload a WhatsApp chat file to begin analysis.")
-
-
