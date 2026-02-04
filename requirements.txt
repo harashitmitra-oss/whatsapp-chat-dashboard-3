@@ -1,0 +1,10 @@
+streamlit
+pandas
+matplotlib
+seaborn
+scikit-learn
+textblob
+emoji
+python-docx
+reportlab
+openai
