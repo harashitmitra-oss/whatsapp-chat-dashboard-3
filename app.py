@@ -17,7 +17,13 @@ from openai import OpenAI
 # -------------------------------
 # App Configuration
 # -------------------------------
-st.set_page_config(page_title="📊 WhatsApp Intelligence Dashboard", layout="wide")
+#st.set_page_config(page_title="📊 WhatsApp Intelligence Dashboard", layout="wide")
+col1, col2 = st.columns([5, 1])
+with col1:
+    st.title("📊 WhatsApp Intelligence & Engagement Dashboard")
+with col2:
+    st.image("logo.png", width=120)
+
 
 st.markdown("""
 <style>
@@ -36,7 +42,7 @@ h1, h2, h3, h4, h5, h6 {
 
 # Add your logo here (place logo.png in project folder)
 #st.image("logo.png", width=180)
-st.markdown('<div style="text-align: right;"><img src="logo.png" width="180"></div>', unsafe_allow_html=True)
+
 
 
 # -------------------------------
@@ -545,5 +551,6 @@ Messages:
 
 else:
     st.info("📥 Please upload a WhatsApp chat file to begin analysis.")
+
 
 
