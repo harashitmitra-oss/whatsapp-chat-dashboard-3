@@ -17,7 +17,7 @@ from openai import OpenAI
 # -------------------------------
 # App Configuration
 # -------------------------------
-#st.set_page_config(page_title="📊 WhatsApp Intelligence Dashboard", layout="wide")
+
 col1, col2 = st.columns([5, 1])
 with col1:
     st.title("📊 WhatsApp Intelligence & Engagement Dashboard")
@@ -551,6 +551,7 @@ Messages:
 
 else:
     st.info("📥 Please upload a WhatsApp chat file to begin analysis.")
+
 
 
 
