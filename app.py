@@ -19,6 +19,24 @@ from openai import OpenAI
 # -------------------------------
 st.set_page_config(page_title="📊 WhatsApp Intelligence Dashboard", layout="wide")
 
+st.markdown("""
+<style>
+body {
+    background-color: #ffffff;
+}
+[data-testid="stSidebar"] {
+    background-color: #0b3d2e;
+    color: white;
+}
+h1, h2, h3, h4, h5, h6 {
+    color: #0b3d2e;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# Add your logo here (place logo.png in project folder)
+st.image("logo.png", width=180)
+
 # -------------------------------
 # Sidebar: AI Key & Settings
 # -------------------------------
@@ -525,3 +543,4 @@ Messages:
 
 else:
     st.info("📥 Please upload a WhatsApp chat file to begin analysis.")
+
