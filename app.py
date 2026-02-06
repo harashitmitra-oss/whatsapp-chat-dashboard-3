@@ -217,7 +217,7 @@ def generate_word_report(summary_text, metrics_dict, filename="report.docx"):
 # -------------------------------
 # UI STARTS HERE
 # -------------------------------
-st.title("📊 WhatsApp Intelligence & Engagement Dashboard")
+#st.title("📊 WhatsApp Intelligence & Engagement Dashboard")
 
 # -------------------------------
 # Group Management
@@ -551,6 +551,7 @@ Messages:
 
 else:
     st.info("📥 Please upload a WhatsApp chat file to begin analysis.")
+
 
 
 
