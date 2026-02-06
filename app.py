@@ -35,7 +35,9 @@ h1, h2, h3, h4, h5, h6 {
 """, unsafe_allow_html=True)
 
 # Add your logo here (place logo.png in project folder)
-st.image("logo.png", width=180)
+#st.image("logo.png", width=180)
+st.markdown('<div style="text-align: right;"><img src="logo.png" width="180"></div>', unsafe_allow_html=True)
+
 
 # -------------------------------
 # Sidebar: AI Key & Settings
@@ -543,4 +545,5 @@ Messages:
 
 else:
     st.info("📥 Please upload a WhatsApp chat file to begin analysis.")
+
 
