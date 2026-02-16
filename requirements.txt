@@ -9,4 +9,5 @@ emoji
 fpdf
 python-docx
 openai
+phonenumbers
 
