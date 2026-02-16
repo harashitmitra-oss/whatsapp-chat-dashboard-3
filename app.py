@@ -93,11 +93,9 @@ def extract_emojis(text):
 
 def detect_country(sender: str):
     s = str(sender).strip()
-    # If not phone-like, unknown
     if not re.search(r"\+?\d", s):
         return "Unknown"
     try:
-        # Requires international format to be reliable
         if not s.startswith("+"):
             return "Unknown"
         num = phonenumbers.parse(s, None)
@@ -135,7 +133,6 @@ def parse_whatsapp_chat(file):
 
     lines = content.split("\n")
     data = []
-    # Works for many exports; may need tweak for your locale format
     pattern = r"(\d{1,2}/\d{1,2}/\d{2,4}), (\d{1,2}:\d{2})(?: (AM|PM))? - (.*?): (.*)"
 
     current_message = None
@@ -253,7 +250,6 @@ def map_sender(sender):
 df["DisplayName"] = df["Sender"].apply(map_sender)
 df["Country"] = df["Sender"].apply(detect_country)
 
-# Sentiment + Emojis
 df["Sentiment"] = df["Message"].apply(analyze_sentiment)
 df["Emojis"] = df["Message"].apply(extract_emojis)
 
@@ -311,12 +307,11 @@ participant_stats = df_window.groupby("DisplayName").agg(
 participant_stats["MessageSharePct"] = (participant_stats["MessageCount"] / max(total_msgs_window, 1)) * 100
 participant_stats["ActiveDaysPct"] = (participant_stats["ActiveDays"] / max(total_days_window, 1)) * 100
 
-# Consistency depends on window
 if window_mode in ["All", "Monthly"]:
     participant_stats["ConsistencyPct"] = (participant_stats["ActiveWeeks"] / max(total_weeks_window, 1)) * 100
 elif window_mode == "Weekly":
     participant_stats["ConsistencyPct"] = participant_stats["ActiveDaysPct"]
-else:  # Daily
+else:
     participant_stats["ConsistencyPct"] = participant_stats["ActiveDaysPct"]
 
 participant_stats["EngagementIndex"] = (
@@ -329,7 +324,7 @@ participant_stats["Sentiment"] = participant_stats["AvgSentiment"]
 participant_stats["EngagementLevel"] = assign_engagement_level_by_percentile(participant_stats["EngagementIndex"])
 
 def calculate_lead_score_v2(row):
-    score = row["EngagementIndex"]  # 0-100 baseline
+    score = row["EngagementIndex"]
     if row["Sentiment"] == "Positive":
         score += 15
     elif row["Sentiment"] == "Negative":
@@ -343,7 +338,6 @@ def calculate_lead_score_v2(row):
 participant_stats["LeadScore"] = participant_stats.apply(calculate_lead_score_v2, axis=1)
 top_lead = participant_stats.sort_values("LeadScore", ascending=False).iloc[0]["DisplayName"] if len(participant_stats) else "N/A"
 
-# Save snapshot (all columns are useful)
 save_daily_report(group_name, participant_stats)
 
 # -------------------------------
@@ -358,47 +352,37 @@ col4.metric("Silent Members", silent_members)
 col5.metric("Top Lead", top_lead)
 
 # -------------------------------
-# Engagement Pies (Percent-based)
+# Engagement Pies
 # -------------------------------
 st.subheader("📊 Engagement Contribution (Percent-based)")
 
 eng_msg = participant_stats.groupby("EngagementLevel")["MessageSharePct"].sum().reset_index()
-fig_eng_share = px.pie(
-    eng_msg, names="EngagementLevel", values="MessageSharePct", hole=0.45,
-    title="Message Share by Engagement Level (%)"
-)
+fig_eng_share = px.pie(eng_msg, names="EngagementLevel", values="MessageSharePct", hole=0.45,
+                       title="Message Share by Engagement Level (%)")
 fig_eng_share.update_traces(textinfo="percent+label")
 st.plotly_chart(fig_eng_share, use_container_width=True)
 
 eng_index = participant_stats.groupby("EngagementLevel")["EngagementIndex"].sum().reset_index()
-if eng_index["EngagementIndex"].sum() > 0:
-    eng_index["IndexSharePct"] = (eng_index["EngagementIndex"] / eng_index["EngagementIndex"].sum()) * 100
-else:
-    eng_index["IndexSharePct"] = 0
+eng_index["IndexSharePct"] = (eng_index["EngagementIndex"] / max(eng_index["EngagementIndex"].sum(), 1)) * 100
 
-fig_eng_index = px.pie(
-    eng_index, names="EngagementLevel", values="IndexSharePct", hole=0.45,
-    title="Engagement Index Share by Level (%)"
-)
+fig_eng_index = px.pie(eng_index, names="EngagementLevel", values="IndexSharePct", hole=0.45,
+                       title="Engagement Index Share by Level (%)")
 fig_eng_index.update_traces(textinfo="percent+label")
 st.plotly_chart(fig_eng_index, use_container_width=True)
 
 # -------------------------------
-# Users by Engagement Level + AI Explanation
+# Users by Engagement Level + AI
 # -------------------------------
 st.subheader("👥 Users by Engagement Level")
 
 for level in ["High", "Medium", "Low"]:
     st.markdown(f"### {level} Engagement Users")
     subset = participant_stats[participant_stats["EngagementLevel"] == level].sort_values("EngagementIndex", ascending=False)
-    st.dataframe(
-        subset[["DisplayName", "MessageCount", "MessageSharePct", "ActiveDaysPct", "EngagementIndex", "Sentiment", "LeadScore"]],
-        use_container_width=True,
-    )
+    st.dataframe(subset[["DisplayName", "MessageCount", "MessageSharePct", "ActiveDaysPct", "EngagementIndex",
+                         "Sentiment", "LeadScore"]], use_container_width=True)
 
     subset_df = df_window[df_window["DisplayName"].isin(subset["DisplayName"])]
     if len(subset_df) > 0:
-        # better sampling: take most recent + random mix
         sample_size = min(40, len(subset_df))
         sample_msgs = subset_df.sort_values("DateTime").tail(sample_size)["Message"].tolist()
         msgs_text = "\n- " + "\n- ".join([str(m) for m in sample_msgs if str(m).strip()][:40])
@@ -412,8 +396,7 @@ Write business-friendly bullet points.
 
 Messages:{msgs_text}
 """
-    ai_text = generate_ai_summary(ai_prompt)
-    st.info(f"🤖 AI Insight on {level} Engagement Users:\n\n{ai_text}")
+    st.info(f"🤖 AI Insight on {level} Engagement Users:\n\n{generate_ai_summary(ai_prompt)}")
 
 # -------------------------------
 # Sentiment Distribution (Window)
@@ -462,8 +445,6 @@ if all_text.strip():
     ax_wc.imshow(wc, interpolation="bilinear")
     ax_wc.axis("off")
     st.pyplot(fig_wc)
-else:
-    st.info("Not enough text to generate a word cloud.")
 
 topic_msgs = df_window["Message"].astype(str).sample(min(250, len(df_window)), random_state=42).tolist()
 topic_text = "\n- " + "\n- ".join(topic_msgs[:250])
@@ -477,41 +458,56 @@ Analyze these WhatsApp group messages and extract:
 
 Messages:{topic_text}
 """
-ai_topics = generate_ai_summary(topic_prompt)
-st.info(f"🤖 AI Topic & Theme Analysis:\n\n{ai_topics}")
+st.info(f"🤖 AI Topic & Theme Analysis:\n\n{generate_ai_summary(topic_prompt)}")
 
 # -------------------------------
 # Participant Search & Profile
 # -------------------------------
 st.subheader("🔍 Participant-Level Analytics")
-selected_user = st.selectbox("Select a participant", participant_stats["DisplayName"].sort_values())
-user_df = df_window[df_window["DisplayName"] == selected_user]
-user_stats = participant_stats[participant_stats["DisplayName"] == selected_user].iloc[0]
+
+# ✅ IMPORTANT UPDATE: choose from FULL chat users, and timeline uses FULL chat
+selected_user = st.selectbox("Select a participant", sorted(df["DisplayName"].unique()))
+
+# Window-based stats for KPIs (if user not in window, show zeros)
+user_stats_window = participant_stats[participant_stats["DisplayName"] == selected_user]
+if not user_stats_window.empty:
+    user_stats = user_stats_window.iloc[0]
+else:
+    user_stats = {
+        "MessageCount": 0,
+        "MessageSharePct": 0.0,
+        "EngagementIndex": 0.0,
+        "EngagementLevel": "N/A",
+        "LeadScore": 0.0
+    }
+
+# ✅ FULL chat data for timeline, irrespective of window
+user_df = df[df["DisplayName"] == selected_user]
 
 colu1, colu2, colu3, colu4, colu5 = st.columns(5)
-colu1.metric("Message Count", int(user_stats["MessageCount"]))
-colu2.metric("Message Share %", round(user_stats["MessageSharePct"], 2))
-colu3.metric("Engagement Index", round(user_stats["EngagementIndex"], 2))
-colu4.metric("Engagement Level", user_stats["EngagementLevel"])
-colu5.metric("Lead Score", round(user_stats["LeadScore"], 2))
+colu1.metric("Message Count (Window)", int(user_stats["MessageCount"]))
+colu2.metric("Message Share % (Window)", round(float(user_stats["MessageSharePct"]), 2))
+colu3.metric("Engagement Index (Window)", round(float(user_stats["EngagementIndex"]), 2))
+colu4.metric("Engagement Level (Window)", user_stats["EngagementLevel"])
+colu5.metric("Lead Score (Window)", round(float(user_stats["LeadScore"]), 2))
 
-st.subheader("📅 User Engagement Timeline")
+st.subheader("📅 User Engagement Timeline (Full Chat)")
 timeline_option = st.radio("View by:", ["Daily", "Weekly", "Monthly"], horizontal=True)
 
 if timeline_option == "Daily":
     timeline_data = user_df.groupby("Date").size().reset_index(name="Messages")
-    fig_user_timeline = px.line(timeline_data, x="Date", y="Messages", title=f"{selected_user} - Daily Engagement")
+    fig_user_timeline = px.line(timeline_data, x="Date", y="Messages", title=f"{selected_user} - Daily Engagement (Full Chat)")
 elif timeline_option == "Weekly":
     timeline_data = user_df.groupby("Week").size().reset_index(name="Messages")
-    fig_user_timeline = px.line(timeline_data, x="Week", y="Messages", title=f"{selected_user} - Weekly Engagement")
+    fig_user_timeline = px.line(timeline_data, x="Week", y="Messages", title=f"{selected_user} - Weekly Engagement (Full Chat)")
 else:
     timeline_data = user_df.groupby("Month").size().reset_index(name="Messages")
-    fig_user_timeline = px.line(timeline_data, x="Month", y="Messages", title=f"{selected_user} - Monthly Engagement")
+    fig_user_timeline = px.line(timeline_data, x="Month", y="Messages", title=f"{selected_user} - Monthly Engagement (Full Chat)")
 
 st.plotly_chart(fig_user_timeline, use_container_width=True)
 
 # -------------------------------
-# Overall Engagement Trends (Full chat, not window)
+# Overall Engagement Trends (Full Chat)
 # -------------------------------
 st.subheader("📈 Overall Engagement Trends (Full Chat)")
 daily_trend = df.groupby("Date").size().reset_index(name="Messages")
@@ -520,19 +516,17 @@ monthly_trend = df.groupby("Month").size().reset_index(name="Messages")
 
 col_t1, col_t2, col_t3 = st.columns(3)
 with col_t1:
-    st.plotly_chart(px.line(daily_trend, x="Date", y="Messages", title="Daily Engagement"), use_container_width=True)
+    st.plotly_chart(px.line(daily_trend, x="Date", y="Messages", title="Daily Engagement (Full Chat)"), use_container_width=True)
 with col_t2:
-    st.plotly_chart(px.line(weekly_trend, x="Week", y="Messages", title="Weekly Engagement"), use_container_width=True)
+    st.plotly_chart(px.line(weekly_trend, x="Week", y="Messages", title="Weekly Engagement (Full Chat)"), use_container_width=True)
 with col_t3:
-    st.plotly_chart(px.line(monthly_trend, x="Month", y="Messages", title="Monthly Engagement"), use_container_width=True)
+    st.plotly_chart(px.line(monthly_trend, x="Month", y="Messages", title="Monthly Engagement (Full Chat)"), use_container_width=True)
 
 # -------------------------------
-# Heatmap (Day vs Hour) (Window)
+# Heatmap (Window)
 # -------------------------------
 st.subheader("🔥 Activity Heatmap (Day vs Hour) (Selected Window)")
 df_window["DayName"] = df_window["DateTime"].dt.day_name()
-
-# Order days
 day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 heatmap_data = df_window.pivot_table(index="DayName", columns="Hour", values="Message", aggfunc="count").fillna(0)
 heatmap_data = heatmap_data.reindex(day_order).dropna(how="all")
@@ -547,19 +541,18 @@ plt.colorbar(im)
 st.pyplot(fig)
 
 # -------------------------------
-# Country-Level Engagement (Window) - Only countries present will show
+# Country-Level Engagement (Window)
 # -------------------------------
 st.subheader("🌍 Country-Level Engagement (Selected Window)")
 country_counts = df_window["Country"].value_counts().reset_index()
 country_counts.columns = ["Country", "Messages"]
 
-# optional: hide Unknown if you want
 hide_unknown = st.checkbox("Hide 'Unknown' country", value=False)
 if hide_unknown:
     country_counts = country_counts[country_counts["Country"] != "Unknown"]
 
 if not country_counts.empty:
-    fig_country = px.bar(country_counts, x="Country", y="Messages", title="Messages by Country")
+    fig_country = px.bar(country_counts, x="Country", y="Messages", title="Messages by Country (Window)")
     st.plotly_chart(fig_country, use_container_width=True)
 else:
     st.info("No country data available (numbers may not be in international + format).")
@@ -576,16 +569,14 @@ if not historical_df.empty:
         Users=("DisplayName", "nunique")
     ).reset_index()
 
-    fig_group_compare = px.bar(
-        hist_summary, x="SourceFile", y="AvgMessages",
-        color="AvgLeadScore", title="Group-wise Avg Messages vs Avg Lead Score"
-    )
+    fig_group_compare = px.bar(hist_summary, x="SourceFile", y="AvgMessages", color="AvgLeadScore",
+                               title="Group-wise Avg Messages vs Avg Lead Score")
     st.plotly_chart(fig_group_compare, use_container_width=True)
 else:
     st.info("No historical group data available yet.")
 
 # -------------------------------
-# AI-Powered Summary (Window)
+# AI Summary (Window)
 # -------------------------------
 st.subheader("🤖 AI Summary (Selected Window)")
 sample_msgs = df_window.sort_values("DateTime").tail(min(350, len(df_window)))["Message"].astype(str).tolist()
@@ -615,14 +606,12 @@ Analyze these WhatsApp messages and identify:
 
 Messages:{sample_text}
 """
-ai_insights = generate_ai_summary(ai_prompt_insights)
-st.info(ai_insights)
+st.info(generate_ai_summary(ai_prompt_insights))
 
 # -------------------------------
 # Automated Report Generation
 # -------------------------------
 st.subheader("📄 Automated Report Generation")
-
 metrics_dict = {
     "Window": f"{window_mode} {window_value if window_value else ''}".strip(),
     "Activation Rate (%)": activation_rate,
