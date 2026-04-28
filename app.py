@@ -38,6 +38,24 @@ st.markdown(
 body { background-color: #ffffff; }
 [data-testid="stSidebar"] { background-color: #0b3d2e; color: white; }
 h1, h2, h3, h4, h5, h6 { color: #0b3d2e; }
+.persona-pill {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #fff3cd;
+    color: #8a5a00;
+    font-weight: 700;
+    border: 1px solid #ffd966;
+}
+.student-pill {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #e8f5e9;
+    color: #0b3d2e;
+    font-weight: 700;
+    border: 1px solid #a5d6a7;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -77,7 +95,16 @@ def generate_ai_summary(prompt: str):
 # Utility Functions
 # -------------------------------
 def clean_phone_number(num):
-    return re.sub(r"\D", "", str(num))[-10:]
+    """
+    Keeps matching accurate for Indian-style and international WhatsApp numbers.
+    Returns the last 10 digits because WhatsApp exports often include country code,
+    spaces, brackets, or hyphens while sheet data may not.
+    """
+    digits = re.sub(r"\D", "", str(num))
+    if not digits or digits.lower() == "nan":
+        return ""
+    return digits[-10:] if len(digits) >= 10 else digits
+
 
 def analyze_sentiment(text):
     polarity = TextBlob(str(text)).sentiment.polarity
@@ -88,8 +115,10 @@ def analyze_sentiment(text):
     else:
         return "Neutral"
 
+
 def extract_emojis(text):
     return [char for char in str(text) if char in emoji.EMOJI_DATA]
+
 
 def detect_country(sender: str):
     s = str(sender).strip()
@@ -103,8 +132,9 @@ def detect_country(sender: str):
             return "Unknown"
         country = geocoder.description_for_number(num, "en")
         return country if country else "Unknown"
-    except:
+    except Exception:
         return "Unknown"
+
 
 def assign_engagement_level_by_percentile(series, high_q=0.80, low_q=0.20):
     if series.empty:
@@ -121,6 +151,146 @@ def assign_engagement_level_by_percentile(series, high_q=0.80, low_q=0.20):
 
     return series.apply(label)
 
+
+def first_existing_col(df, possible_names):
+    """Find a column by normalized name, making sheet headers tolerant to spaces/case."""
+    normalized = {str(c).strip().lower(): c for c in df.columns}
+    for name in possible_names:
+        key = str(name).strip().lower()
+        if key in normalized:
+            return normalized[key]
+    return None
+
+
+# -------------------------------
+# Student + Persona Directory Loader
+# -------------------------------
+STUDENT_PHONE_FILE = "Students_phone.xlsx"
+
+@st.cache_data(show_spinner=False)
+def load_students_and_personas(path=STUDENT_PHONE_FILE):
+    """
+    Expected workbook in GitHub repo root:
+    Sheet 1: student data with Name, Phone, UG/PG, Batch
+    Sheet 2: persona data with Name, Persona Name, Phone, Email, Email 2 (if exists), UG/PG
+    """
+    empty_students = pd.DataFrame(columns=["Name", "Phone", "UG/PG", "Batch", "PhoneKey"])
+    empty_personas = pd.DataFrame(columns=["Name", "Persona Name", "Phone", "Email", "Email 2 (if exists)", "UG/PG", "PhoneKey"])
+
+    if not os.path.exists(path):
+        return empty_students, empty_personas, f"⚠️ `{path}` not found in repo root. Add it to GitHub main folder to enable student/persona matching."
+
+    try:
+        sheets = pd.read_excel(path, sheet_name=None)
+        sheet_names = list(sheets.keys())
+        if not sheet_names:
+            return empty_students, empty_personas, f"⚠️ `{path}` has no readable sheets."
+
+        students_raw = sheets[sheet_names[0]].copy()
+        personas_raw = sheets[sheet_names[1]].copy() if len(sheet_names) > 1 else pd.DataFrame()
+
+        # Student sheet
+        s_name_col = first_existing_col(students_raw, ["Name", "Student Name", "Full Name"])
+        s_phone_col = first_existing_col(students_raw, ["Phone", "Mobile", "Phone Number", "Contact", "Whatsapp", "WhatsApp Number"])
+        s_program_col = first_existing_col(students_raw, ["UG/PG", "UG PG", "Program", "Course"])
+        s_batch_col = first_existing_col(students_raw, ["Batch", "Batch Name"])
+
+        students = pd.DataFrame()
+        if s_name_col and s_phone_col:
+            students["Name"] = students_raw[s_name_col].astype(str).str.strip()
+            students["Phone"] = students_raw[s_phone_col]
+            students["UG/PG"] = students_raw[s_program_col].astype(str).str.strip() if s_program_col else ""
+            students["Batch"] = students_raw[s_batch_col].astype(str).str.strip() if s_batch_col else ""
+            students["PhoneKey"] = students["Phone"].apply(clean_phone_number)
+            students = students[(students["PhoneKey"] != "") & (students["Name"].str.lower() != "nan")]
+            students = students.drop_duplicates(subset=["PhoneKey"], keep="first")
+        else:
+            students = empty_students.copy()
+
+        # Persona sheet
+        personas = pd.DataFrame()
+        if not personas_raw.empty:
+            p_name_col = first_existing_col(personas_raw, ["Name", "Student Name", "Full Name"])
+            p_persona_col = first_existing_col(personas_raw, ["Persona Name", "Persona", "Alias", "Persona/Name"])
+            p_phone_col = first_existing_col(personas_raw, ["Phone", "Mobile", "Phone Number", "Contact", "Whatsapp", "WhatsApp Number"])
+            p_email_col = first_existing_col(personas_raw, ["Email", "Email 1", "Primary Email"])
+            p_email2_col = first_existing_col(personas_raw, ["Email 2 (if exists)", "Email 2", "Secondary Email", "Alternate Email"])
+            p_program_col = first_existing_col(personas_raw, ["UG/PG", "UG PG", "Program", "Course"])
+
+            if p_phone_col and (p_persona_col or p_name_col):
+                personas["Name"] = personas_raw[p_name_col].astype(str).str.strip() if p_name_col else ""
+                personas["Persona Name"] = personas_raw[p_persona_col].astype(str).str.strip() if p_persona_col else personas["Name"]
+                personas["Phone"] = personas_raw[p_phone_col]
+                personas["Email"] = personas_raw[p_email_col].astype(str).str.strip() if p_email_col else ""
+                personas["Email 2 (if exists)"] = personas_raw[p_email2_col].astype(str).str.strip() if p_email2_col else ""
+                personas["UG/PG"] = personas_raw[p_program_col].astype(str).str.strip() if p_program_col else ""
+                personas["PhoneKey"] = personas["Phone"].apply(clean_phone_number)
+                personas = personas[(personas["PhoneKey"] != "") & (personas["Persona Name"].str.lower() != "nan")]
+                personas = personas.drop_duplicates(subset=["PhoneKey"], keep="first")
+            else:
+                personas = empty_personas.copy()
+        else:
+            personas = empty_personas.copy()
+
+        status = f"✅ Loaded `{path}`: {len(students)} student phones and {len(personas)} persona phones."
+        return students, personas, status
+
+    except Exception as e:
+        return empty_students, empty_personas, f"⚠️ Could not read `{path}`: {type(e).__name__}: {e}"
+
+
+students_df, personas_df, directory_status = load_students_and_personas()
+st.sidebar.caption(directory_status)
+
+# Build maps once
+student_phone_map = students_df.set_index("PhoneKey").to_dict("index") if not students_df.empty else {}
+persona_phone_map = personas_df.set_index("PhoneKey").to_dict("index") if not personas_df.empty else {}
+
+
+def enrich_sender(sender):
+    phone_key = clean_phone_number(sender)
+    persona_row = persona_phone_map.get(phone_key)
+    student_row = student_phone_map.get(phone_key)
+
+    is_persona = persona_row is not None
+    persona_name = str(persona_row.get("Persona Name", "")).strip() if persona_row else ""
+    student_name = ""
+
+    if persona_row and str(persona_row.get("Name", "")).strip() and str(persona_row.get("Name", "")).lower() != "nan":
+        student_name = str(persona_row.get("Name", "")).strip()
+    elif student_row:
+        student_name = str(student_row.get("Name", "")).strip()
+
+    display_name = persona_name if is_persona and persona_name else (student_name if student_name else sender)
+
+    ug_pg = ""
+    batch = ""
+    email = ""
+    email2 = ""
+
+    if student_row:
+        ug_pg = str(student_row.get("UG/PG", "")).strip()
+        batch = str(student_row.get("Batch", "")).strip()
+
+    if persona_row:
+        ug_pg = str(persona_row.get("UG/PG", ug_pg)).strip() or ug_pg
+        email = str(persona_row.get("Email", "")).strip()
+        email2 = str(persona_row.get("Email 2 (if exists)", "")).strip()
+
+    return pd.Series({
+        "PhoneKey": phone_key,
+        "DisplayName": display_name,
+        "StudentName": student_name,
+        "PersonaName": persona_name,
+        "IsPersona": is_persona,
+        "UG/PG": ug_pg,
+        "Batch": batch,
+        "Email": email,
+        "Email 2": email2,
+        "MatchType": "Persona" if is_persona else ("Student" if student_row else "Unmatched"),
+    })
+
+
 # -------------------------------
 # WhatsApp Chat Parser (Robust)
 # -------------------------------
@@ -128,7 +298,7 @@ def parse_whatsapp_chat(file):
     content = file.read()
     try:
         content = content.decode("utf-8")
-    except:
+    except Exception:
         content = content.decode("latin-1")
 
     lines = content.split("\n")
@@ -166,7 +336,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 def save_daily_report(group_name, df_summary):
     date_str = datetime.now().strftime("%Y-%m-%d")
-    file_path = os.path.join(DATA_DIR, f"{group_name}_{date_str}.csv")
+    safe_group = re.sub(r"[^A-Za-z0-9_-]+", "_", str(group_name)).strip("_") or "Default_Group"
+    file_path = os.path.join(DATA_DIR, f"{safe_group}_{date_str}.csv")
     df_summary.to_csv(file_path, index=False)
 
 def load_historical_reports():
@@ -174,9 +345,9 @@ def load_historical_reports():
     data = []
     for f in files:
         if f.endswith(".csv"):
-            df = pd.read_csv(os.path.join(DATA_DIR, f))
-            df["SourceFile"] = f
-            data.append(df)
+            df_hist = pd.read_csv(os.path.join(DATA_DIR, f))
+            df_hist["SourceFile"] = f
+            data.append(df_hist)
     return pd.concat(data, ignore_index=True) if data else pd.DataFrame()
 
 # -------------------------------
@@ -190,7 +361,7 @@ def generate_pdf_report(summary_text, metrics_dict, filename="report.pdf"):
     for k, v in metrics_dict.items():
         pdf.multi_cell(0, 6, f"{k}: {v}")
     pdf.multi_cell(0, 6, "\nAI Summary:\n")
-    pdf.multi_cell(0, 6, summary_text)
+    pdf.multi_cell(0, 6, str(summary_text).encode("latin-1", "replace").decode("latin-1"))
     pdf.output(filename)
     return filename
 
@@ -200,7 +371,7 @@ def generate_word_report(summary_text, metrics_dict, filename="report.docx"):
     for k, v in metrics_dict.items():
         doc.add_paragraph(f"{k}: {v}")
     doc.add_heading("AI Summary", level=2)
-    doc.add_paragraph(summary_text)
+    doc.add_paragraph(str(summary_text))
     doc.save(filename)
     return filename
 
@@ -216,9 +387,6 @@ group_name = st.sidebar.text_input("Enter Group Name", value="Default_Group")
 st.header("📂 Upload WhatsApp Chat File")
 chat_file = st.file_uploader("Upload WhatsApp .txt chat file", type=["txt"])
 
-st.header("📑 Upload Conversion Tracker (Optional)")
-excel_file = st.file_uploader("Upload Excel file with names (multi-sheet supported)", type=["xlsx"])
-
 if not chat_file:
     st.info("📥 Please upload a WhatsApp chat file to begin analysis.")
     st.stop()
@@ -228,30 +396,15 @@ if not chat_file:
 # -------------------------------
 df = parse_whatsapp_chat(chat_file)
 
-# Phone Number → Name Matching
-number_name_map = {}
-if excel_file:
-    excel_data = pd.read_excel(excel_file, sheet_name=None)
-    for sheet, data in excel_data.items():
-        for col in data.columns:
-            if "phone" in col.lower() or "mobile" in col.lower():
-                name_col = [c for c in data.columns if "name" in c.lower()]
-                if name_col:
-                    for _, row in data.iterrows():
-                        num = clean_phone_number(row[col])
-                        name = str(row[name_col[0]])
-                        if num:
-                            number_name_map[num] = name
-
-def map_sender(sender):
-    num = clean_phone_number(sender)
-    return number_name_map.get(num, sender)
-
-df["DisplayName"] = df["Sender"].apply(map_sender)
+sender_enrichment = df["Sender"].apply(enrich_sender)
+df = pd.concat([df, sender_enrichment], axis=1)
 df["Country"] = df["Sender"].apply(detect_country)
-
 df["Sentiment"] = df["Message"].apply(analyze_sentiment)
 df["Emojis"] = df["Message"].apply(extract_emojis)
+df["EmojiCount"] = df["Emojis"].apply(len)
+df["WordCount"] = df["Message"].astype(str).str.split().apply(len)
+df["IsMedia"] = df["Message"].astype(str).str.contains(r"<Media omitted>|image omitted|video omitted|audio omitted|sticker omitted", case=False, regex=True, na=False)
+df["IsReactionLike"] = df["Message"].astype(str).str.contains(r"reacted|reaction|👍|❤️|😂|🤣|😮|😢|🙏", case=False, regex=True, na=False)
 
 # -------------------------------
 # Analysis Window Selector
@@ -269,11 +422,11 @@ elif window_mode == "Monthly":
 
 df_window = df.copy()
 if window_mode == "Daily":
-    df_window = df[df["Date"] == window_value]
+    df_window = df[df["Date"] == window_value].copy()
 elif window_mode == "Weekly":
-    df_window = df[df["Week"] == window_value]
+    df_window = df[df["Week"] == window_value].copy()
 elif window_mode == "Monthly":
-    df_window = df[df["Month"] == window_value]
+    df_window = df[df["Month"] == window_value].copy()
 
 if df_window.empty:
     st.warning("No messages found in the selected window.")
@@ -302,6 +455,20 @@ participant_stats = df_window.groupby("DisplayName").agg(
     ActiveWeeks=("Week", "nunique"),
     ActiveMonths=("Month", "nunique"),
     AvgSentiment=("Sentiment", lambda x: x.mode()[0] if not x.mode().empty else "Neutral"),
+    PhoneKey=("PhoneKey", "first"),
+    Sender=("Sender", "first"),
+    StudentName=("StudentName", "first"),
+    PersonaName=("PersonaName", "first"),
+    IsPersona=("IsPersona", "max"),
+    MatchType=("MatchType", "first"),
+    UGPG=("UG/PG", "first"),
+    Batch=("Batch", "first"),
+    Email=("Email", "first"),
+    Email2=("Email 2", "first"),
+    EmojiCount=("EmojiCount", "sum"),
+    MediaCount=("IsMedia", "sum"),
+    ReactionLikeCount=("IsReactionLike", "sum"),
+    WordCount=("WordCount", "sum"),
 ).reset_index()
 
 participant_stats["MessageSharePct"] = (participant_stats["MessageCount"] / max(total_msgs_window, 1)) * 100
@@ -336,6 +503,13 @@ def calculate_lead_score_v2(row):
     return round(score, 2)
 
 participant_stats["LeadScore"] = participant_stats.apply(calculate_lead_score_v2, axis=1)
+participant_stats["OverallScore"] = (
+    participant_stats["LeadScore"] +
+    0.05 * participant_stats["EmojiCount"] +
+    0.10 * participant_stats["ReactionLikeCount"] +
+    0.02 * participant_stats["WordCount"]
+).round(2)
+
 top_lead = participant_stats.sort_values("LeadScore", ascending=False).iloc[0]["DisplayName"] if len(participant_stats) else "N/A"
 
 save_daily_report(group_name, participant_stats)
@@ -350,6 +524,147 @@ col2.metric("Total Messages", total_messages)
 col3.metric("Active Members", active_members)
 col4.metric("Silent Members", silent_members)
 col5.metric("Top Lead", top_lead)
+
+# -------------------------------
+# Student + Persona Matching Overview
+# -------------------------------
+st.subheader("🧾 Student & Persona Matching Overview")
+match_summary = participant_stats["MatchType"].value_counts().reset_index()
+match_summary.columns = ["Match Type", "Participants"]
+
+col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+col_m1.metric("Matched Students", int((participant_stats["MatchType"] == "Student").sum()))
+col_m2.metric("Matched Personas", int((participant_stats["MatchType"] == "Persona").sum()))
+col_m3.metric("Unmatched Senders", int((participant_stats["MatchType"] == "Unmatched").sum()))
+col_m4.metric("Persona Messages", int(df_window[df_window["IsPersona"]]["Message"].count()))
+
+if not match_summary.empty:
+    fig_match = px.pie(match_summary, names="Match Type", values="Participants", hole=0.45,
+                       title="Student / Persona / Unmatched Participants")
+    st.plotly_chart(fig_match, use_container_width=True)
+
+match_table = participant_stats[[
+    "DisplayName", "MatchType", "StudentName", "PersonaName", "UGPG", "Batch", "Email", "Email2",
+    "MessageCount", "EngagementIndex", "LeadScore", "OverallScore"
+]].sort_values(["MatchType", "MessageCount"], ascending=[True, False])
+
+match_table = match_table.rename(columns={"UGPG": "UG/PG", "Email2": "Email 2"})
+
+def highlight_persona_rows(row):
+    if row.get("MatchType") == "Persona":
+        return ["background-color: #fff3cd; color: #5f4300; font-weight: 700" for _ in row]
+    if row.get("MatchType") == "Student":
+        return ["background-color: #e8f5e9; color: #0b3d2e" for _ in row]
+    return ["" for _ in row]
+
+st.dataframe(match_table.style.apply(highlight_persona_rows, axis=1), use_container_width=True)
+
+# -------------------------------
+# Persona Activity Section (Window-aware)
+# -------------------------------
+st.subheader("🎭 Persona Activity Analytics (Selected Window)")
+persona_stats = participant_stats[participant_stats["IsPersona"] == True].copy()
+
+if persona_stats.empty:
+    st.info("No persona activity found in the selected window. Make sure persona phone numbers are present in `Students_phone.xlsx` sheet 2 and match the WhatsApp sender numbers.")
+else:
+    col_p1, col_p2, col_p3, col_p4, col_p5 = st.columns(5)
+    col_p1.metric("Active Personas", int(persona_stats["DisplayName"].nunique()))
+    col_p2.metric("Persona Messages", int(persona_stats["MessageCount"].sum()))
+    col_p3.metric("Persona Emojis", int(persona_stats["EmojiCount"].sum()))
+    col_p4.metric("Persona Media", int(persona_stats["MediaCount"].sum()))
+    col_p5.metric("Avg Persona Score", round(float(persona_stats["OverallScore"].mean()), 2))
+
+    persona_activity_table = persona_stats[[
+        "DisplayName", "StudentName", "PersonaName", "UGPG", "MessageCount", "MessageSharePct",
+        "ActiveDays", "EmojiCount", "ReactionLikeCount", "MediaCount", "Sentiment",
+        "EngagementIndex", "LeadScore", "OverallScore"
+    ]].rename(columns={"UGPG": "UG/PG"}).sort_values("OverallScore", ascending=False)
+
+    st.dataframe(persona_activity_table.style.apply(lambda row: ["background-color: #fff3cd; color: #5f4300; font-weight: 700" for _ in row], axis=1), use_container_width=True)
+
+    persona_msg_chart = px.bar(
+        persona_activity_table,
+        x="DisplayName",
+        y="MessageCount",
+        text="MessageCount",
+        title="Persona Message Count"
+    )
+    st.plotly_chart(persona_msg_chart, use_container_width=True)
+
+    persona_score_chart = px.bar(
+        persona_activity_table,
+        x="DisplayName",
+        y="OverallScore",
+        text="OverallScore",
+        title="Persona Overall Score"
+    )
+    st.plotly_chart(persona_score_chart, use_container_width=True)
+
+    persona_df_window = df_window[df_window["IsPersona"] == True].copy()
+
+    st.markdown("### 😄 Persona Emoji / Reaction Activity")
+    persona_emojis = [e for sublist in persona_df_window["Emojis"] for e in sublist]
+    persona_emoji_counts = Counter(persona_emojis)
+    persona_emoji_df = pd.DataFrame(persona_emoji_counts.most_common(20), columns=["Emoji", "Count"])
+    if not persona_emoji_df.empty:
+        persona_emoji_df["Pct"] = (persona_emoji_df["Count"] / persona_emoji_df["Count"].sum()) * 100
+        st.plotly_chart(px.bar(persona_emoji_df, x="Emoji", y="Count", text="Count", title="Top Persona Emojis"), use_container_width=True)
+    else:
+        st.info("No persona emojis found in this selected window.")
+
+    st.markdown("### 📌 Latest Persona Messages")
+    latest_persona_msgs = persona_df_window.sort_values("DateTime", ascending=False)[[
+        "DateTime", "DisplayName", "StudentName", "PersonaName", "Message", "Sentiment", "EmojiCount", "IsMedia", "ReactionLikeCount"
+    ]].head(100)
+    st.dataframe(latest_persona_msgs, use_container_width=True)
+
+    st.markdown("### 📈 Persona Activity Over Time")
+    persona_timeline_option = st.radio("Persona timeline view by:", ["Daily", "Weekly", "Monthly"], horizontal=True, key="persona_timeline_option")
+    if persona_timeline_option == "Daily":
+        persona_timeline = persona_df_window.groupby(["Date", "DisplayName"]).size().reset_index(name="Messages")
+        fig_persona_timeline = px.line(persona_timeline, x="Date", y="Messages", color="DisplayName", title="Persona Daily Activity")
+    elif persona_timeline_option == "Weekly":
+        persona_timeline = persona_df_window.groupby(["Week", "DisplayName"]).size().reset_index(name="Messages")
+        fig_persona_timeline = px.line(persona_timeline, x="Week", y="Messages", color="DisplayName", title="Persona Weekly Activity")
+    else:
+        persona_timeline = persona_df_window.groupby(["Month", "DisplayName"]).size().reset_index(name="Messages")
+        fig_persona_timeline = px.line(persona_timeline, x="Month", y="Messages", color="DisplayName", title="Persona Monthly Activity")
+    st.plotly_chart(fig_persona_timeline, use_container_width=True)
+
+# -------------------------------
+# Time-of-Day Chart (Window-aware)
+# -------------------------------
+st.subheader("⏰ Time-of-Day Message Activity (Selected Window)")
+hourly_counts = df_window.groupby("Hour").size().reset_index(name="Messages")
+all_hours = pd.DataFrame({"Hour": list(range(24))})
+hourly_counts = all_hours.merge(hourly_counts, on="Hour", how="left").fillna({"Messages": 0})
+hourly_counts["HourLabel"] = hourly_counts["Hour"].apply(lambda h: f"{int(h):02d}:00")
+
+peak_hour_row = hourly_counts.sort_values("Messages", ascending=False).iloc[0]
+st.caption(f"Peak message time in selected filter: {peak_hour_row['HourLabel']} with {int(peak_hour_row['Messages'])} messages.")
+fig_hourly = px.bar(
+    hourly_counts,
+    x="HourLabel",
+    y="Messages",
+    text="Messages",
+    title="Messages by Hour of Day"
+)
+st.plotly_chart(fig_hourly, use_container_width=True)
+
+# Optional split by persona/student/unmatched for the same selected filter
+hourly_by_type = df_window.groupby(["Hour", "MatchType"]).size().reset_index(name="Messages")
+hourly_by_type["HourLabel"] = hourly_by_type["Hour"].apply(lambda h: f"{int(h):02d}:00")
+if not hourly_by_type.empty:
+    fig_hourly_type = px.bar(
+        hourly_by_type,
+        x="HourLabel",
+        y="Messages",
+        color="MatchType",
+        barmode="group",
+        title="Messages by Hour and Sender Type"
+    )
+    st.plotly_chart(fig_hourly_type, use_container_width=True)
 
 # -------------------------------
 # Engagement Pies
@@ -378,8 +693,11 @@ st.subheader("👥 Users by Engagement Level")
 for level in ["High", "Medium", "Low"]:
     st.markdown(f"### {level} Engagement Users")
     subset = participant_stats[participant_stats["EngagementLevel"] == level].sort_values("EngagementIndex", ascending=False)
-    st.dataframe(subset[["DisplayName", "MessageCount", "MessageSharePct", "ActiveDaysPct", "EngagementIndex",
-                         "Sentiment", "LeadScore"]], use_container_width=True)
+    display_cols = [
+        "DisplayName", "MatchType", "StudentName", "PersonaName", "MessageCount", "MessageSharePct",
+        "ActiveDaysPct", "EngagementIndex", "Sentiment", "LeadScore", "OverallScore"
+    ]
+    st.dataframe(subset[display_cols].style.apply(highlight_persona_rows, axis=1), use_container_width=True)
 
     subset_df = df_window[df_window["DisplayName"].isin(subset["DisplayName"])]
     if len(subset_df) > 0:
@@ -465,7 +783,7 @@ st.info(f"🤖 AI Topic & Theme Analysis:\n\n{generate_ai_summary(topic_prompt)}
 # -------------------------------
 st.subheader("🔍 Participant-Level Analytics")
 
-# ✅ IMPORTANT UPDATE: choose from FULL chat users, and timeline uses FULL chat
+# ✅ choose from FULL chat users, and timeline uses FULL chat
 selected_user = st.selectbox("Select a participant", sorted(df["DisplayName"].unique()))
 
 # Window-based stats for KPIs (if user not in window, show zeros)
@@ -478,18 +796,28 @@ else:
         "MessageSharePct": 0.0,
         "EngagementIndex": 0.0,
         "EngagementLevel": "N/A",
-        "LeadScore": 0.0
+        "LeadScore": 0.0,
+        "OverallScore": 0.0,
+        "MatchType": "N/A",
+        "StudentName": "",
+        "PersonaName": ""
     }
 
 # ✅ FULL chat data for timeline, irrespective of window
 user_df = df[df["DisplayName"] == selected_user]
 
-colu1, colu2, colu3, colu4, colu5 = st.columns(5)
+colu1, colu2, colu3, colu4, colu5, colu6 = st.columns(6)
 colu1.metric("Message Count (Window)", int(user_stats["MessageCount"]))
 colu2.metric("Message Share % (Window)", round(float(user_stats["MessageSharePct"]), 2))
 colu3.metric("Engagement Index (Window)", round(float(user_stats["EngagementIndex"]), 2))
 colu4.metric("Engagement Level (Window)", user_stats["EngagementLevel"])
 colu5.metric("Lead Score (Window)", round(float(user_stats["LeadScore"]), 2))
+colu6.metric("Overall Score (Window)", round(float(user_stats.get("OverallScore", 0)), 2))
+
+if str(user_stats.get("MatchType", "")) == "Persona":
+    st.markdown(f"<span class='persona-pill'>Persona: {user_stats.get('PersonaName', selected_user)}</span>", unsafe_allow_html=True)
+elif str(user_stats.get("MatchType", "")) == "Student":
+    st.markdown(f"<span class='student-pill'>Student: {user_stats.get('StudentName', selected_user)}</span>", unsafe_allow_html=True)
 
 st.subheader("📅 User Engagement Timeline (Full Chat)")
 timeline_option = st.radio("View by:", ["Daily", "Weekly", "Monthly"], horizontal=True)
@@ -619,6 +947,7 @@ metrics_dict = {
     "Active Members": active_members,
     "Silent Members": silent_members,
     "Top Lead": top_lead,
+    "Persona Messages": int(df_window[df_window["IsPersona"]]["Message"].count()),
 }
 
 if st.button("⬇️ Download PDF Report"):
