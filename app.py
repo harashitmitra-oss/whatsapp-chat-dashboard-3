@@ -23,11 +23,11 @@ from phonenumbers import geocoder
 # -------------------------------
 # App Configuration
 # -------------------------------
-st.set_page_config(page_title="WhatsApp Intelligence Dashboard", layout="wide")
+st.set_page_config(page_title="Tetr Commnunity Analysis", layout="wide")
 
 col1, col2 = st.columns([5, 1])
 with col1:
-    st.title("📊 WhatsApp Intelligence & Engagement Dashboard")
+    st.title("📊 Tetr Commnunity Analysis")
 with col2:
     if os.path.exists("logo.png"):
         st.image("logo.png", width=120)
@@ -614,9 +614,13 @@ else:
         st.info("No persona emojis found in this selected window.")
 
     st.markdown("### 📌 Latest Persona Messages")
-    latest_persona_msgs = persona_df_window.sort_values("DateTime", ascending=False)[[
-        "DateTime", "DisplayName", "StudentName", "PersonaName", "Message", "Sentiment", "EmojiCount", "IsMedia", "ReactionLikeCount"
-    ]].head(100)
+    latest_persona_cols = [
+        "DateTime", "DisplayName", "StudentName", "PersonaName", "Message",
+        "Sentiment", "EmojiCount", "IsMedia", "IsReactionLike"
+    ]
+    latest_persona_cols = [c for c in latest_persona_cols if c in persona_df_window.columns]
+    latest_persona_msgs = persona_df_window.sort_values("DateTime", ascending=False)[latest_persona_cols].head(100)
+    latest_persona_msgs = latest_persona_msgs.rename(columns={"IsReactionLike": "ReactionLike"})
     st.dataframe(latest_persona_msgs, use_container_width=True)
 
     st.markdown("### 📈 Persona Activity Over Time")
